@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Pigeon Post">
+  <title>Pigeon Post</title>
+  <rect width="64" height="64" rx="14" fill="#07448f"/>
+  <!-- body -->
+  <path d="M14 38c0-10 8-17 17-17 3 0 5 1 7 2l5-4c2-2 5-1 6 1l1 2-3 2c1 2 2 4 2 7 0 10-9 17-20 17-8 0-15-4-15-10z" fill="#ffffff"/>
+  <!-- wing -->
+  <path d="M20 37c4-7 11-9 17-8-2 6-7 11-15 12-2 0-3-2-2-4z" fill="#b7dfff"/>
+  <!-- iridescent neck -->
+  <path d="M38 23c3 1 6 4 7 7l-5 2c-1-3-3-5-5-6z" fill="#7ec9ff"/>
+  <!-- eye + beak -->
+  <circle cx="44" cy="22" r="1.8" fill="#002f65"/>
+  <path d="M49 22l6 1-6 2z" fill="#f2b84b"/>
+  <!-- tail -->
+  <path d="M14 38l-6-3 2 7z" fill="#ffffff"/>
+  <!-- envelope -->
+  <g transform="translate(28 41) rotate(-8)">
+    <rect width="16" height="11" rx="2" fill="#f3f7fc" stroke="#002f65" stroke-width="1.6"/>
+    <path d="M1.5 1.5l6.5 5 6.5-5" fill="none" stroke="#002f65" stroke-width="1.6" stroke-linejoin="round"/>
+  </g>
+  <!-- feet -->
+  <path d="M27 52v4M33 52v4" stroke="#f2b84b" stroke-width="2" stroke-linecap="round"/>
+</svg>

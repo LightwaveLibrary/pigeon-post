@@ -1,0 +1,102 @@
+[% INCLUDE 'doc-head-open.inc' %]
+<title>Pigeon Post settings &rsaquo; Plugins &rsaquo; Koha</title>
+[% INCLUDE 'doc-head-close.inc' %]
+<link rel="stylesheet" href="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.css&amp;v=[% version | html %]">
+</head>
+<body id="plugin_pigeon_post_config" class="tools">
+[% INCLUDE 'header.inc' %]
+[% INCLUDE 'cat-search.inc' %]
+
+<nav id="breadcrumbs" aria-label="Breadcrumb" class="breadcrumb">
+  <ol>
+    <li><a href="/cgi-bin/koha/mainpage.pl">Home</a></li>
+    <li><a href="/cgi-bin/koha/plugins/plugins-home.pl">Plugins</a></li>
+    <li><a href="[% tool_url | html %]">Pigeon Post Dashboard</a></li>
+    <li><a href="#" aria-current="page">Settings</a></li>
+  </ol>
+</nav>
+
+<div class="main container-fluid">
+<div class="pigeon">
+  <header class="pp-topbar">
+    <div class="pp-brand">
+      <img src="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.svg&amp;v=[% version | html %]" alt="" width="44" height="44">
+      <div>
+        <div class="pp-wordmark">Pigeon <span>Post</span></div>
+        <div class="pp-nav-label">SETTINGS</div>
+      </div>
+    </div>
+    <div class="pp-top-actions"><a class="pp-button pp-on-navy" href="[% tool_url | html %]">Back to dashboard</a></div>
+  </header>
+
+  [% IF saved %]<div class="pp-ok-note" role="status">Settings saved.</div>[% END %]
+  [% IF errors.size %]<div class="pp-hold pp-bad" role="alert"><b>Please fix:</b><ul>[% FOREACH e IN errors %]<li>[% e | html %]</li>[% END %]</ul></div>[% END %]
+  [% IF digest_result %]
+    [% IF digest_result.ok %]<div class="pp-ok-note" role="status">Digest queued for [% digest_result.recipients.join(', ') | html %]. It goes out with Koha's next message-queue run.</div>
+    [% ELSE %]<div class="pp-hold pp-bad" role="alert">Could not send the digest: [% digest_result.error | html %]</div>[% END %]
+  [% END %]
+  [% UNLESS can_manage %]<div class="pp-hold" role="note">You can view these settings, but changing them needs permission to edit patrons.</div>[% END %]
+
+  <form method="post" action="/cgi-bin/koha/plugins/run.pl" class="pp-settings">
+    [% TRY %][% INCLUDE 'csrf-token.inc' %][% CATCH %][% END %]
+    <input type="hidden" name="class" value="[% CLASS | html %]">
+    <input type="hidden" name="method" value="configure">
+    <input type="hidden" name="op" value="cud-save">
+
+    <div class="pp-grid">
+      <section class="pp-card pp-span-2">
+        <p class="pp-eyebrow">Invalid address cleanup</p>
+        <h3>When is an address "invalid"?</h3>
+        <div class="pp-fields">
+          <label>Failures in a row before cleanup
+            <input type="number" name="threshold" min="1" max="1000" value="[% s.threshold | html %]" required>
+            <small>Counted since the address last received an email successfully.</small></label>
+          <label>Look back (days)
+            <input type="number" name="lookback_days" min="1" max="3650" value="[% s.lookback_days | html %]" required>
+            <small>Only failures this recent count.</small></label>
+        </div>
+        <fieldset class="pp-checks"><legend>Patron email fields to check</legend>
+          <label><input type="checkbox" name="fields" value="email" [% 'checked' IF fields_selected.email %]> Primary email</label>
+          <label><input type="checkbox" name="fields" value="emailpro" [% 'checked' IF fields_selected.emailpro %]> Secondary email</label>
+          <label><input type="checkbox" name="fields" value="B_email" [% 'checked' IF fields_selected.B_email %]> Alternate address email</label>
+        </fieldset>
+        <label class="pp-switch"><input type="checkbox" name="auto_cleanup" value="1" [% 'checked' IF s.auto_cleanup %]>
+          <span><b>Clean up automatically every night</b><br>
+          <small>Runs with Koha's nightly plugin job (plugins_nightly.pl). It skips the run when most of the last day's emails failed, since that usually means the mail server is down rather than the addresses being bad.</small></span></label>
+        <label>Most addresses to clear automatically per night
+          <input type="number" name="auto_cap" min="1" max="10000" value="[% s.auto_cap | html %]" required>
+          <small>If more than this are over the threshold, nothing is cleared and they wait for review on the dashboard.</small></label>
+      </section>
+
+      <section class="pp-card">
+        <p class="pp-eyebrow">Weekly digest</p>
+        <h3>Email me a summary</h3>
+        <label class="pp-switch"><input type="checkbox" name="digest_enabled" value="1" [% 'checked' IF s.digest_enabled %]>
+          <span><b>Send a weekly digest</b></span></label>
+        <label>Send to
+          <input type="text" name="digest_to" value="[% s.digest_to | html %]" placeholder="name@library.org, other@library.org">
+          <small>Separate several addresses with commas.</small></label>
+        <label>Send on
+          <select name="digest_weekday">
+            [% days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'] %]
+            [% FOREACH i IN [0..6] %]<option value="[% i %]" [% 'selected' IF s.digest_weekday == i %]>[% days.$i %]</option>[% END %]
+          </select></label>
+        <p class="pp-muted">It covers the previous 7 days, including sent and failed counts, the change from the week before, failure reasons, busiest notices, cleanup activity, queue backlog and SMTP status.
+          [% IF s.digest_last_sent %]Last sent [% s.digest_last_sent | html %].[% END %]</p>
+      </section>
+    </div>
+    <div class="pp-actions"><button type="submit" class="pp-button pp-primary" [% 'disabled' UNLESS can_manage %]>Save settings</button></div>
+  </form>
+
+  <form method="post" action="/cgi-bin/koha/plugins/run.pl" class="pp-actions">
+    [% TRY %][% INCLUDE 'csrf-token.inc' %][% CATCH %][% END %]
+    <input type="hidden" name="class" value="[% CLASS | html %]">
+    <input type="hidden" name="method" value="configure">
+    <input type="hidden" name="op" value="cud-send-digest">
+    <button type="submit" class="pp-button pp-secondary" [% 'disabled' UNLESS can_manage %]>Send a digest now</button>
+    <span class="pp-muted">Uses the saved recipients. It doesn't change the weekly schedule.</span>
+  </form>
+  <footer class="pp-footer"><span class="pp-wordmark-sm">Pigeon <span>Post</span></span> <span>v[% version | html %] · by koha.pro</span></footer>
+</div>
+</div>
+[% INCLUDE 'intranet-bottom.inc' %]

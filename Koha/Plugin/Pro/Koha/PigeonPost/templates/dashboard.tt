@@ -1,0 +1,196 @@
+[% INCLUDE 'doc-head-open.inc' %]
+<title>Pigeon Post Dashboard &rsaquo; Tools &rsaquo; Koha</title>
+[% INCLUDE 'doc-head-close.inc' %]
+<link rel="stylesheet" href="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.css&amp;v=[% version | html %]">
+</head>
+<body id="plugin_pigeon_post" class="tools">
+[% INCLUDE 'header.inc' %]
+[% INCLUDE 'cat-search.inc' %]
+
+<nav id="breadcrumbs" aria-label="Breadcrumb" class="breadcrumb">
+  <ol>
+    <li><a href="/cgi-bin/koha/mainpage.pl">Home</a></li>
+    <li><a href="/cgi-bin/koha/tools/tools-home.pl">Tools</a></li>
+    <li><a href="#" aria-current="page">Pigeon Post Dashboard</a></li>
+  </ol>
+</nav>
+
+<div class="main container-fluid">
+<form id="pp-csrf" hidden>[% TRY %][% INCLUDE 'csrf-token.inc' %][% CATCH %][% END %]</form>
+
+<div class="pigeon" id="pigeon"
+     data-tool-url="[% tool_url | html %]"
+     data-class="[% CLASS | html %]"
+     data-can-manage="[% can_manage ? 1 : 0 %]"
+     data-today="[% today | html %]">
+
+  <header class="pp-topbar">
+    <div class="pp-brand">
+      <img src="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.svg&amp;v=[% version | html %]" alt="" width="44" height="44">
+      <div>
+        <div class="pp-wordmark">Pigeon <span>Post</span></div>
+        <div class="pp-nav-label">EMAIL ACTIVITY DASHBOARD</div>
+      </div>
+    </div>
+    <div class="pp-top-actions">
+      <span class="pp-version">v[% version | html %]</span>
+      <a class="pp-button pp-on-navy" href="[% config_url | html %]">Settings</a>
+    </div>
+  </header>
+
+  <section class="pp-filters" aria-label="Date range">
+    <div class="pp-presets" role="group" aria-label="Quick ranges">
+      <button type="button" class="pp-chip" data-preset="7">7 days</button>
+      <button type="button" class="pp-chip is-active" data-preset="30">30 days</button>
+      <button type="button" class="pp-chip" data-preset="90">90 days</button>
+      <button type="button" class="pp-chip" data-preset="ytd">Year to date</button>
+      <button type="button" class="pp-chip" data-preset="365">12 months</button>
+    </div>
+    <form class="pp-custom" id="pp-range">
+      <label>From <input type="date" name="from" id="pp-from"></label>
+      <label>To <input type="date" name="to" id="pp-to"></label>
+      <label>Notice type
+        <select name="letter" id="pp-letter"><option value="">All notices</option></select>
+      </label>
+      <button type="submit" class="pp-button pp-primary">Apply</button>
+    </form>
+  </section>
+
+  <section class="pp-band" aria-live="polite">
+    <div class="pp-kpi">
+      <strong id="kpi-lifetime">—</strong>
+      <span>Emails sent, all time</span>
+      <small id="kpi-lifetime-sub">&nbsp;</small>
+    </div>
+    <div class="pp-kpi">
+      <strong id="kpi-sent">—</strong>
+      <span>Sent in range</span>
+      <small id="kpi-range-label">&nbsp;</small>
+    </div>
+    <div class="pp-kpi">
+      <strong id="kpi-failed">—</strong>
+      <span>Failed deliveries</span>
+      <small id="kpi-lifetime-failed">&nbsp;</small>
+    </div>
+    <div class="pp-kpi">
+      <strong id="kpi-rate">—</strong>
+      <span>Failure rate</span>
+      <small>failed ÷ (sent + failed)</small>
+    </div>
+    <div class="pp-kpi">
+      <strong id="kpi-pending">—</strong>
+      <span>Waiting in queue</span>
+      <small id="kpi-oldest">&nbsp;</small>
+    </div>
+  </section>
+
+  <div id="pp-queue-warning" class="pp-hold" hidden></div>
+
+  <div class="pp-grid">
+    <section class="pp-card pp-span-2">
+      <div class="pp-card-top">
+        <p class="pp-eyebrow">Daily activity</p>
+        <div class="pp-legend"><i class="pp-sw sent"></i> Sent <i class="pp-sw failed"></i> Failed</div>
+      </div>
+      <h3>Sent vs failed, per day</h3>
+      <div class="pp-chart pp-chart-tall"><canvas id="chart-daily" aria-label="Daily sent and failed emails"></canvas></div>
+    </section>
+
+    <section class="pp-card" id="pp-smtp">
+      <div class="pp-card-top">
+        <p class="pp-eyebrow">SMTP status</p>
+        <button type="button" class="pp-button pp-secondary pp-small" id="pp-smtp-refresh">Check now</button>
+      </div>
+      <h3>Mail servers</h3>
+      <ul class="pp-lights" id="pp-smtp-list"><li class="pp-muted">Checking…</li></ul>
+      <p class="pp-foot" id="pp-smtp-at">&nbsp;</p>
+    </section>
+
+    <section class="pp-card">
+      <p class="pp-eyebrow">Why emails failed</p>
+      <h3>Failure reasons</h3>
+      <div class="pp-chart"><canvas id="chart-reasons" aria-label="Failure reasons"></canvas></div>
+      <p class="pp-empty" id="reasons-empty" hidden>No failures in this range. 🎉</p>
+    </section>
+
+    <section class="pp-card">
+      <p class="pp-eyebrow">What was sent</p>
+      <h3>Busiest notice types</h3>
+      <div class="pp-bars" id="pp-letters"></div>
+    </section>
+
+    <section class="pp-card">
+      <p class="pp-eyebrow">When it was sent</p>
+      <h3>Emails by hour of day</h3>
+      <div class="pp-chart"><canvas id="chart-hours" aria-label="Emails by hour of day"></canvas></div>
+    </section>
+
+    <section class="pp-card pp-span-3">
+      <div class="pp-card-top">
+        <p class="pp-eyebrow">Failed deliveries</p>
+        <input type="search" id="pp-failed-filter" placeholder="Filter addresses…" aria-label="Filter failed addresses">
+      </div>
+      <h3>Addresses that failed in this range</h3>
+      <div class="pp-table-scroll">
+        <table class="pp-table" id="pp-failed">
+          <thead><tr>
+            <th data-sort="address">Address</th><th data-sort="patron">Patron</th>
+            <th data-sort="failures" class="num">Failures</th><th data-sort="last_code">Last reason</th>
+            <th data-sort="last_failed">Last failed</th>
+          </tr></thead>
+          <tbody><tr><td colspan="5" class="pp-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <p class="pp-foot" id="pp-failed-count">&nbsp;</p>
+    </section>
+
+    [% IF can_manage %]
+    <section class="pp-card pp-span-3" id="pp-cleanup">
+      <div class="pp-card-top">
+        <p class="pp-eyebrow">Invalid address cleanup</p>
+        <span class="pp-status-label"><i class="pp-dot [% auto ? 'ok' : 'off' %]"></i> AUTO-CLEANUP [% auto ? 'ON' : 'OFF' %]</span>
+      </div>
+      <h3>Addresses with [% threshold | html %]+ failures in a row</h3>
+      <p class="pp-muted">Looks back [% lookback | html %] days. Only failures since the address last worked are counted.
+        Clearing one blanks that patron email field and drops its waiting messages, so the queue stops retrying.
+        Every clear is logged and can be undone. <a href="[% config_url | html %]">Change these settings</a></p>
+      <div id="pp-health" class="pp-hold" hidden></div>
+      <div class="pp-table-scroll">
+        <table class="pp-table" id="pp-candidates">
+          <thead><tr><th class="pp-check"><input type="checkbox" id="pp-check-all" aria-label="Select all"></th>
+            <th>Patron</th><th>Field</th><th>Address</th><th class="num">Failures in a row</th><th>Last reason</th><th>Last failed</th></tr></thead>
+          <tbody><tr><td colspan="7" class="pp-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pp-actions">
+        <button type="button" class="pp-button pp-primary" id="pp-clear" disabled>Clear selected addresses</button>
+        <span id="pp-clear-confirm" hidden>
+          <span class="pp-confirm-text"></span>
+          <button type="button" class="pp-button pp-danger" id="pp-clear-yes">Yes, clear them</button>
+          <button type="button" class="pp-button pp-secondary" id="pp-clear-no">Cancel</button>
+        </span>
+        <span id="pp-clear-msg" class="pp-muted" role="status"></span>
+      </div>
+
+      <h4 class="pp-subhead">Cleanup log</h4>
+      <p class="pp-muted" id="pp-last-auto"></p>
+      <div class="pp-table-scroll">
+        <table class="pp-table" id="pp-log">
+          <thead><tr><th>When</th><th>Patron</th><th>Field</th><th>Old address</th><th class="num">Failures</th><th>By</th><th></th></tr></thead>
+          <tbody><tr><td colspan="7" class="pp-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    [% END %]
+  </div>
+
+  <p class="pp-note" id="pp-history-note" hidden></p>
+  <footer class="pp-footer"><span class="pp-wordmark-sm">Pigeon <span>Post</span></span> <span>by koha.pro</span></footer>
+</div>
+</div>
+
+[% MACRO jsinclude BLOCK %]
+  <script src="[% tool_url | html %]&amp;op=asset&amp;file=chart.umd.min.js&amp;v=4.4.1"></script>
+  <script src="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.js&amp;v=[% version | html %]"></script>
+[% END %]
+[% INCLUDE 'intranet-bottom.inc' %]
