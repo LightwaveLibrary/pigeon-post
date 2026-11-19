@@ -1,7 +1,9 @@
+[% USE raw %]
+[% SET footerjs = 1 %]
 [% INCLUDE 'doc-head-open.inc' %]
 <title>Pigeon Post settings &rsaquo; Plugins &rsaquo; Koha</title>
 [% INCLUDE 'doc-head-close.inc' %]
-<link rel="stylesheet" href="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.css&amp;v=[% version | html %]">
+<style>[% pp_css | $raw %]</style>
 </head>
 <body id="plugin_pigeon_post_config" class="tools">
 [% INCLUDE 'header.inc' %]
@@ -20,7 +22,7 @@
 <div class="pigeon">
   <header class="pp-topbar">
     <div class="pp-brand">
-      <img src="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.svg&amp;v=[% version | html %]" alt="" width="44" height="44">
+      <span class="pp-logo" aria-hidden="true">[% pp_logo | $raw %]</span>
       <div>
         <div class="pp-wordmark">Pigeon <span>Post</span></div>
         <div class="pp-nav-label">SETTINGS</div>

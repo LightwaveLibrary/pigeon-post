@@ -21,7 +21,7 @@
 Requires Koha 22.11 or later.
 
 ## Install
-1. Run `tools/build_kpz.sh`, which creates `dist/pigeon-post-v0.1.0.kpz`.
+1. Run `tools/build_kpz.sh`, which creates `dist/pigeon-post-v<version>.kpz`.
 2. In Koha, go to Administration → Manage plugins → Upload plugin, and choose the KPZ.
 3. Open it from Tools → Pigeon Post Dashboard. Settings are under the **Settings** button, or the plugin's *Configure* action.
 4. For automatic cleanup and the weekly digest, make sure Koha's nightly plugin job (`misc/cronjobs/plugins_nightly.pl`) runs from cron.

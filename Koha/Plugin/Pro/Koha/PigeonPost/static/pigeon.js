@@ -10,8 +10,23 @@
   var TODAY = root.dataset.today;
   var C = { navy: '#002f65', blue: '#07448f', muted: '#607086', line: '#edf2f8', bad: '#c8463d',
             series: ['#07448f', '#c8463d', '#b6cde6', '#7ec9ff', '#002f65', '#607086', '#d7b76f', '#16855c'] };
-  var state = { from: null, to: null, letter: '' };
+  var state = { from: root.dataset.from || null, to: root.dataset.to || null, letter: root.dataset.letter || '' };
   var charts = {};
+
+  // The script is running, so take down the "script blocked?" notice.
+  var boot = document.getElementById('pp-boot');
+  if (boot) boot.hidden = true;
+  if (!window.Chart) showError('The chart library did not load, so charts are hidden. The numbers and tables still work.');
+
+  function showError(msg) {
+    var box = document.getElementById('pp-error');
+    if (!box) return;
+    var line = document.createElement('div');
+    line.textContent = msg;
+    if (!box.firstChild) { var b = document.createElement('b'); b.textContent = 'Something went wrong. '; box.appendChild(b); }
+    box.appendChild(line);
+    box.hidden = false;
+  }
 
   // ---------- helpers ----------
   function $(id) { return document.getElementById(id); }
@@ -40,10 +55,26 @@
     if (min < 2880) return 'oldest waiting ' + (min / 60).toFixed(1) + ' h';
     return 'oldest waiting ' + Math.round(min / 1440) + ' days';
   }
+  // Turn any response into data or a readable error. A proxy/WAF (e.g. BunkerWeb)
+  // answers with its own HTML page, so a non-JSON reply is reported by status.
+  function readJSON(r) {
+    return r.text().then(function (t) {
+      var j = null;
+      try { j = JSON.parse(t); } catch (e) { /* not JSON */ }
+      if (j && r.ok) return j;
+      var why = j && j.error ? j.error
+        : 'HTTP ' + r.status + (r.statusText ? ' ' + r.statusText : '') +
+          (r.status === 403 ? ': blocked (a firewall or a missing permission)'
+            : r.status === 429 ? ': too many requests (rate limited by a proxy or firewall)'
+            : r.status >= 500 ? ': server error (see Koha\'s plack-intranet-error.log)'
+            : !j ? ': the reply was not dashboard data (possibly a proxy or login page)' : '');
+      throw new Error(why.replace(/\s+$/, ''));
+    });
+  }
   function getJSON(op, params) {
     var q = new URLSearchParams(params || {});
     return fetch(TOOL + '&op=' + encodeURIComponent(op) + '&' + q.toString(), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
-      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; }); });
+      .then(readJSON);
   }
   function csrfToken() {
     var i = document.querySelector('#pp-csrf input[name="csrf_token"]');
@@ -57,7 +88,7 @@
     var tok = csrfToken(); if (tok) body.append('csrf_token', tok);
     (pairs || []).forEach(function (p) { body.append(p[0], p[1]); });
     return fetch('/cgi-bin/koha/plugins/run.pl', { method: 'POST', credentials: 'same-origin', body: body, headers: { Accept: 'application/json' } })
-      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; }); });
+      .then(readJSON);
   }
 
   if (window.Chart) {
@@ -96,6 +127,12 @@
     if (f && t) setRange(f <= t ? f : t, f <= t ? t : f);
     state.letter = $('pp-letter').value;
     root.querySelectorAll('[data-preset]').forEach(function (x) { x.classList.remove('is-active'); });
+    try {   // keep the range in the address bar so reloads and bookmarks keep it
+      var u = new URL(location.href);
+      u.searchParams.set('from', state.from); u.searchParams.set('to', state.to);
+      if (state.letter) u.searchParams.set('letter', state.letter); else u.searchParams.delete('letter');
+      history.replaceState(null, '', u.toString());
+    } catch (err) { /* old browser: fine */ }
     loadAll();
   });
 
@@ -223,7 +260,7 @@
   var WORD = { green: 'UP', amber: 'SLOW', red: 'DOWN' };
   function loadSmtp(refresh) {
     var btn = $('pp-smtp-refresh'); btn.disabled = true; btn.textContent = 'Checking…';
-    getJSON('smtp', refresh ? { refresh: 1 } : {}).then(function (d) {
+    return getJSON('smtp', refresh ? { refresh: 1 } : {}).then(function (d) {
       var ul = $('pp-smtp-list'); ul.innerHTML = '';
       if (!d.servers.length) ul.appendChild(el('li', { class: 'pp-muted', text: 'No SMTP servers configured.' }));
       d.servers.forEach(function (s) {
@@ -238,14 +275,16 @@
         '. Green means the server answered, amber means it was slow or TLS failed, and red means it is unreachable.';
     }).catch(function (e) {
       $('pp-smtp-list').innerHTML = ''; $('pp-smtp-list').appendChild(el('li', { class: 'pp-muted', text: 'Could not check: ' + e.message }));
+      showError('SMTP check: ' + e.message);
     }).then(function () { btn.disabled = false; btn.textContent = 'Check now'; });
   }
   $('pp-smtp-refresh').addEventListener('click', function () { loadSmtp(true); });
 
   // ---------- cleanup ----------
   function loadCleanup() {
-    if (!CAN_MANAGE || !$('pp-cleanup')) return;
-    getJSON('cleanup-preview').then(function (d) {
+    if (!CAN_MANAGE || !$('pp-cleanup')) return Promise.resolve();
+    return getJSON('cleanup').then(function (d) {
+      renderLog(d);
       var tb = $('pp-candidates').querySelector('tbody'); tb.innerHTML = '';
       var h = $('pp-health');
       if (d.health && d.health.outage) {
@@ -268,8 +307,10 @@
     }).catch(function (e) {
       var tb = $('pp-candidates').querySelector('tbody'); tb.innerHTML = '';
       tb.appendChild(el('tr', null, [el('td', { colspan: 7, class: 'pp-muted', text: 'Could not load: ' + e.message })]));
+      var lb = $('pp-log').querySelector('tbody'); lb.innerHTML = '';
+      lb.appendChild(el('tr', null, [el('td', { colspan: 7, class: 'pp-muted', text: 'Could not load: ' + e.message })]));
+      showError('Cleanup list: ' + e.message);
     });
-    loadLog();
   }
   function selected() { return Array.prototype.map.call(root.querySelectorAll('.pp-cand:checked'), function (c) { return c.value; }); }
   function updateClearButton() { var n = selected().length; $('pp-clear').disabled = !n; $('pp-clear').textContent = n ? 'Clear ' + n + ' selected' : 'Clear selected addresses'; }
@@ -296,13 +337,13 @@
         .then(function () { $('pp-clear-yes').disabled = false; $('pp-clear-confirm').hidden = true; $('pp-clear').hidden = false; loadCleanup(); });
     });
   }
-  function loadLog() {
-    getJSON('cleanup-log').then(function (d) {
+  function renderLog(d) {
+    (function () {
       var tb = $('pp-log').querySelector('tbody'); tb.innerHTML = '';
       var la = d.last_auto;
       $('pp-last-auto').textContent = la ? 'Last automatic run ' + la.at + ': ' + (la.skipped || ('cleared ' + la.cleared + '.')) : '';
-      if (!d.rows.length) tb.appendChild(el('tr', null, [el('td', { colspan: 7, class: 'pp-muted', text: 'Nothing has been cleared yet.' })]));
-      d.rows.forEach(function (r) {
+      if (!d.log.length) tb.appendChild(el('tr', null, [el('td', { colspan: 7, class: 'pp-muted', text: 'Nothing has been cleared yet.' })]));
+      d.log.forEach(function (r) {
         var undo = r.undone_at ? el('span', { class: 'pp-muted', text: 'Undone ' + r.undone_at })
           : el('button', { type: 'button', class: 'pp-button pp-secondary pp-small', 'data-undo': r.id, text: 'Undo' });
         var tr = el('tr', { class: r.undone_at ? 'is-undone' : '' }, [
@@ -313,7 +354,7 @@
         tr.appendChild(el('td', null, [undo]));
         tb.appendChild(tr);
       });
-    }).catch(function () {});
+    })();
   }
   if ($('pp-log')) $('pp-log').addEventListener('click', function (e) {
     var id = e.target.getAttribute && e.target.getAttribute('data-undo');
@@ -328,12 +369,25 @@
   // ---------- load ----------
   function loadAll() {
     var p = { from: state.from, to: state.to }; if (state.letter) p.letter = state.letter;
-    getJSON('data', p).then(renderSummary).catch(function (e) { $('kpi-sent').textContent = '!'; $('kpi-range-label').textContent = 'Could not load: ' + e.message; });
-    getJSON('failed', p).then(function (d) { failedRows = d.rows; renderFailed(); }).catch(function () {});
+    $('pp-error').hidden = true; $('pp-error').innerHTML = '';
+    return getJSON('data', p).then(function (d) {
+      renderSummary(d);
+      failedRows = d.failed_rows || []; renderFailed();
+    }).catch(function (e) {
+      ['kpi-lifetime', 'kpi-sent', 'kpi-failed', 'kpi-rate', 'kpi-pending'].forEach(function (id) { $(id).textContent = '!'; });
+      var tb = $('pp-failed').querySelector('tbody'); tb.innerHTML = '';
+      tb.appendChild(el('tr', null, [el('td', { colspan: 5, class: 'pp-muted', text: 'Could not load: ' + e.message })]));
+      showError('Dashboard data: ' + e.message);
+    });
   }
 
-  preset('30');
-  loadAll();
-  loadSmtp(false);
-  loadCleanup();
+  // Start-up: one request at a time, so rate limiters in front of Koha aren't tripped.
+  if (state.from && state.to) {
+    setRange(state.from, state.to);
+    var isDefault = state.to === TODAY && state.from === addDays(TODAY, -29) && !state.letter;
+    root.querySelectorAll('[data-preset]').forEach(function (x) { x.classList.toggle('is-active', isDefault && x.dataset.preset === '30'); });
+  } else preset('30');
+  loadAll()
+    .then(function () { return loadSmtp(false); })
+    .then(function () { return loadCleanup(); });
 })();

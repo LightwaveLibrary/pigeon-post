@@ -188,3 +188,7 @@
   .pigeon .pp-fields { grid-template-columns: 1fr; }
   .pigeon .pp-topbar, .pigeon .pp-filters, .pigeon .pp-band { padding-left: 14px; padding-right: 14px; }
 }
+
+/* inline logo */
+.pigeon .pp-logo { display: block; width: 44px; height: 44px; }
+.pigeon .pp-logo svg { display: block; width: 44px; height: 44px; }

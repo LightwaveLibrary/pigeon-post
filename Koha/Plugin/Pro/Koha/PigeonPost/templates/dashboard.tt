@@ -1,7 +1,9 @@
+[% USE raw %]
+[% SET footerjs = 1 %]
 [% INCLUDE 'doc-head-open.inc' %]
 <title>Pigeon Post Dashboard &rsaquo; Tools &rsaquo; Koha</title>
 [% INCLUDE 'doc-head-close.inc' %]
-<link rel="stylesheet" href="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.css&amp;v=[% version | html %]">
+<style>[% pp_css | $raw %]</style>
 </head>
 <body id="plugin_pigeon_post" class="tools">
 [% INCLUDE 'header.inc' %]
@@ -22,11 +24,13 @@
      data-tool-url="[% tool_url | html %]"
      data-class="[% CLASS | html %]"
      data-can-manage="[% can_manage ? 1 : 0 %]"
-     data-today="[% today | html %]">
+     data-today="[% today | html %]"
+     data-from="[% from | html %]" data-to="[% to | html %]" data-letter="[% letter | html %]"
+     data-bundle-url="[% tool_url | html %]&amp;op=asset&amp;asset=bundle&amp;v=[% version | html %]">
 
   <header class="pp-topbar">
     <div class="pp-brand">
-      <img src="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.svg&amp;v=[% version | html %]" alt="" width="44" height="44">
+      <span class="pp-logo" aria-hidden="true">[% pp_logo | $raw %]</span>
       <div>
         <div class="pp-wordmark">Pigeon <span>Post</span></div>
         <div class="pp-nav-label">EMAIL ACTIVITY DASHBOARD</div>
@@ -46,15 +50,22 @@
       <button type="button" class="pp-chip" data-preset="ytd">Year to date</button>
       <button type="button" class="pp-chip" data-preset="365">12 months</button>
     </div>
-    <form class="pp-custom" id="pp-range">
-      <label>From <input type="date" name="from" id="pp-from"></label>
-      <label>To <input type="date" name="to" id="pp-to"></label>
+    <form class="pp-custom" id="pp-range" method="get" action="/cgi-bin/koha/plugins/run.pl">
+      <input type="hidden" name="class" value="[% CLASS | html %]">
+      <input type="hidden" name="method" value="tool">
+      <label>From <input type="date" name="from" id="pp-from" value="[% from | html %]"></label>
+      <label>To <input type="date" name="to" id="pp-to" value="[% to | html %]"></label>
       <label>Notice type
         <select name="letter" id="pp-letter"><option value="">All notices</option></select>
       </label>
       <button type="submit" class="pp-button pp-primary">Apply</button>
     </form>
   </section>
+
+  <div id="pp-boot" class="pp-hold" role="status"><b>Loading the dashboard…</b>
+    <span id="pp-boot-help">If this message doesn't go away, the dashboard's script was blocked before it could run, often by a web application firewall or proxy.
+    Open <a href="[% tool_url | html %]&amp;op=asset&amp;asset=bundle&amp;v=[% version | html %]" target="_blank" rel="noopener">the script URL</a> directly to see what it returns.</span></div>
+  <div id="pp-error" class="pp-hold pp-bad" role="alert" hidden></div>
 
   <section class="pp-band" aria-live="polite">
     <div class="pp-kpi">
@@ -190,7 +201,6 @@
 </div>
 
 [% MACRO jsinclude BLOCK %]
-  <script src="[% tool_url | html %]&amp;op=asset&amp;file=chart.umd.min.js&amp;v=4.4.1"></script>
-  <script src="[% tool_url | html %]&amp;op=asset&amp;file=pigeon.js&amp;v=[% version | html %]"></script>
+  <script src="[% tool_url | html %]&amp;op=asset&amp;asset=bundle&amp;v=[% version | html %]"></script>
 [% END %]
 [% INCLUDE 'intranet-bottom.inc' %]

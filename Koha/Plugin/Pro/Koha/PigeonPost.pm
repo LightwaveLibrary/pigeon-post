@@ -14,7 +14,7 @@ use Koha::Plugin::Pro::Koha::PigeonPost::Cleanup;
 use Koha::Plugin::Pro::Koha::PigeonPost::Digest;
 use Koha::Plugin::Pro::Koha::PigeonPost::Smtp;
 
-our $VERSION = '0.1.0';
+our $VERSION = '0.1.2';
 our $metadata = {
     name            => 'Pigeon Post',
     author          => 'koha.pro',
@@ -38,11 +38,11 @@ my %DEFAULTS = (
     smtp_cache_s   => 60,
 );
 
+# Assets are addressed by short keys (no file names in the URL, which some WAF
+# rules treat as file-access attempts). The page needs exactly one request: the
+# bundle. CSS and the logo are inlined into the HTML.
 my %ASSETS = (
-    'chart.umd.min.js' => 'application/javascript',
-    'pigeon.js'        => 'application/javascript',
-    'pigeon.css'       => 'text/css',
-    'pigeon.svg'       => 'image/svg+xml',
+    bundle => { type => 'application/javascript', files => [ 'chart.umd.min.js', 'pigeon.js' ] },
 );
 
 sub new {
@@ -166,14 +166,12 @@ sub tool {
     my $cgi = $self->_cgi;
     my $op  = $cgi->param('op') // '';
 
-    return $self->_asset($cgi->param('file')) if $op eq 'asset';
+    return $self->_asset(scalar $cgi->param('asset')) if $op eq 'asset';
 
     my %json_get = (
-        data              => \&_op_data,
-        failed            => \&_op_failed,
-        smtp              => \&_op_smtp,
-        'cleanup-preview' => \&_op_cleanup_preview,
-        'cleanup-log'     => \&_op_cleanup_log,
+        data    => \&_op_data,
+        smtp    => \&_op_smtp,
+        cleanup => \&_op_cleanup,
     );
     my %json_post = (
         'cud-cleanup-apply' => \&_op_cleanup_apply,
@@ -194,7 +192,10 @@ sub tool {
 
     my $template = $self->get_template({ file => 'templates/dashboard.tt' });
     my $s = $self->settings;
+    my ($from, $to, $letter) = $self->_range;
     $template->param(
+        $self->_inline,
+        from => $from, to => $to, letter => $letter // '',
         version    => $VERSION,
         tool_url   => $self->_url('tool'),
         config_url => $self->_url('configure'),
@@ -208,18 +209,36 @@ sub tool {
     return;
 }
 
-sub _asset {
+sub _slurp {
     my ($self, $file) = @_;
-    my $cgi = $self->_cgi;
-    my $type = defined $file ? $ASSETS{$file} : undef;
-    unless ($type) { print $cgi->header(-status => '404 Not Found', -type => 'text/plain'); print 'Not found'; return }
-    my $path = $self->mbf_path("static/$file");
-    open(my $fh, '<:raw', $path) or do { print $cgi->header(-status => '404 Not Found', -type => 'text/plain'); print 'Not found'; return };
+    open(my $fh, '<:raw', $self->mbf_path("static/$file")) or die "Cannot read $file: $!\n";
     local $/;
     my $body = <$fh>;
     close $fh;
-    print $cgi->header(-type => $type, -charset => ($type =~ /svg|css|javascript/ ? 'UTF-8' : ''), -cache_control => 'public, max-age=86400');
-    binmode STDOUT, ':raw';
+    return $body;
+}
+
+sub _inline {
+    my ($self) = @_;
+    require Encode;
+    return (
+        pp_css  => Encode::decode('UTF-8', $self->_slurp('pigeon.css')),
+        pp_logo => Encode::decode('UTF-8', $self->_slurp('pigeon.svg')),
+    );
+}
+
+sub _asset {
+    my ($self, $key) = @_;
+    my $cgi = $self->_cgi;
+    my $a = defined $key ? $ASSETS{$key} : undef;
+    unless ($a) { print $cgi->header(-status => '404 Not Found', -type => 'text/plain'); print 'Not found'; return }
+    my $body = eval { join "\n;\n", map { $self->_slurp($_) } @{ $a->{files} } };
+    unless (defined $body) {
+        print $cgi->header(-status => '500 Internal Server Error', -type => 'text/plain');
+        print "Pigeon Post asset error: $@";
+        return;
+    }
+    print $cgi->header(-type => $a->{type}, -charset => 'UTF-8', -cache_control => 'public, max-age=86400');
     print $body;
     return;
 }
@@ -237,15 +256,11 @@ sub _op_data {
     my ($self) = @_;
     my ($from, $to, $letter) = $self->_range;
     $self->_rollup;    # keeps totals correct even if the nightly cron isn't running
-    my $sum = $self->_stats->summary(from => $from, to => $to, letter => $letter);
+    my $stats = $self->_stats;
+    my $sum = $stats->summary(from => $from, to => $to, letter => $letter);
     $sum->{rolled_through} = $self->retrieve_data('rolled_through');
+    $sum->{failed_rows}    = $stats->failed_list(from => $from, to => $to, letter => $letter);
     return $sum;
-}
-
-sub _op_failed {
-    my ($self) = @_;
-    my ($from, $to, $letter) = $self->_range;
-    return { rows => $self->_stats->failed_list(from => $from, to => $to, letter => $letter) };
 }
 
 sub _op_smtp {
@@ -272,21 +287,18 @@ sub _candidates {
     );
 }
 
-sub _op_cleanup_preview {
+sub _op_cleanup {
     my ($self) = @_;
-    return { error => 'You need permission to edit patrons to see cleanup candidates.' } unless $self->can_manage;
+    die "You need permission to edit patrons to see cleanup candidates.\n" unless $self->can_manage;
     my $s = $self->settings;
+    my $c = $self->_cleanup;
     return {
         candidates => $self->_candidates,
-        health     => $self->_cleanup->recent_health,
+        health     => $c->recent_health,
         threshold  => $s->{threshold} + 0, lookback_days => $s->{lookback_days} + 0, fields => $s->{fields_list},
+        log        => $c->log_entries(100),
+        last_auto  => scalar eval { JSON->new->allow_nonref->decode($self->retrieve_data('last_auto_cleanup') // 'null') },
     };
-}
-
-sub _op_cleanup_log {
-    my ($self) = @_;
-    return { error => 'You need permission to edit patrons to see the cleanup log.' } unless $self->can_manage;
-    return { rows => $self->_cleanup->log_entries(100), last_auto => eval { JSON::decode_json($self->retrieve_data('last_auto_cleanup') // 'null') } };
 }
 
 sub _op_cleanup_apply {
@@ -342,6 +354,7 @@ sub configure {
     my $template = $self->get_template({ file => 'templates/configure.tt' });
     my $s = $self->settings;
     $template->param(
+        $self->_inline,
         version => $VERSION, tool_url => $self->_url('tool'), config_url => $self->_url('configure'),
         s => $s, fields_selected => { map { $_ => 1 } @{ $s->{fields_list} } },
         errors => \@errors, saved => $saved, digest_result => $digest_result, can_manage => $self->can_manage,
