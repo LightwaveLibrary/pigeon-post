@@ -38,6 +38,7 @@ sub _fmt { my $n = shift // 0; 1 while $n =~ s/^(\d+)(\d{3})/$1,$2/; return $n }
 # $d = { from, to, week => {sent, failed, failure_rate}, prev => {sent, failed},
 #        reasons => [{code,n}], letters => [{letter_code,sent,failed}],
 #        cleared, candidates, queue => {pending, oldest_age_minutes},
+#        no_address, no_email_week, no_email_prev, prefs_switched (optional),
 #        smtp => [{name, light, ms, message}], dashboard_url, library }
 sub build_html {
     my ($d) = @_;
@@ -96,6 +97,13 @@ sub build_html {
         . $tr->('Addresses cleared this week', _fmt($d->{cleared}))
         . $tr->('Addresses currently over the failure threshold', _fmt($d->{candidates}))
         . '</table></div>'
+        . (defined $d->{no_address} ? qq{<div style="$card"><p style="$eyebrow">Patrons without an email address</p><table role="presentation" width="100%" style="border-collapse:collapse;font-size:13px">}
+            . $tr->('Patrons set to get email notices but with no address', _fmt($d->{no_address}))
+            . (defined $d->{no_email_week} ? $tr->('NO_EMAIL failures this week', _fmt($d->{no_email_week}) . qq{ <span style="color:$C{muted};font-weight:400">} . $e->(_pct_change($d->{no_email_week}, $d->{no_email_prev}) . ' vs last week') . '</span>') : '')
+            . $tr->('Patrons switched to print or SMS this week', _fmt($d->{prefs_switched}))
+            . '</table>'
+            . ($d->{no_address} ? qq{<p style="color:$C{muted};font-size:12px;margin:10px 0 0">Their email notices fail every time. Switch them to print or SMS, or ask for a new address, from the dashboard.</p>} : '')
+            . '</div>' : '')
         . ($d->{dashboard_url} ? qq{<p style="margin:6px 0 22px"><a href="} . $e->($d->{dashboard_url}) . qq{" style="display:inline-block;background:$C{blue};color:#fff;text-decoration:none;font-weight:650;font-size:13px;border-radius:5px;padding:12px 18px">Open the Pigeon Post Dashboard</a></p>} : '')
         . qq{</td></tr>
 <tr><td style="padding:14px 26px 26px;font-size:10px;color:$C{muted};border-top:1px solid $C{line}">Sent by the Pigeon Post plugin for } . $e->($d->{library} // 'Koha') . qq{ · koha.pro</td></tr>

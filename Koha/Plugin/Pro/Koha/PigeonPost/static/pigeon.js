@@ -331,10 +331,11 @@
       postJSON('cud-cleanup-apply', items.map(function (i) { return ['item', i]; })).then(function (d) {
         var ok = d.results.filter(function (r) { return r.ok; }).length;
         var bad = d.results.filter(function (r) { return !r.ok; });
-        $('pp-clear-msg').textContent = 'Cleared ' + ok + '.' + (bad.length ? ' Skipped ' + bad.length + ': ' + bad.map(function (r) { return r.address + ' (' + r.error + ')'; }).join('; ') : '') +
+        var moved = d.results.filter(function (r) { return r.prefs_switched; }).length;
+        $('pp-clear-msg').textContent = 'Cleared ' + ok + '.' + (moved ? ' Moved the email notices of ' + moved + ' patron' + (moved === 1 ? '' : 's') + ' left with no address.' : '') + (bad.length ? ' Skipped ' + bad.length + ': ' + bad.map(function (r) { return r.address + ' (' + r.error + ')'; }).join('; ') : '') +
           (items.length > d.results.length ? ' Some selections were no longer over the threshold and were left alone.' : '');
       }).catch(function (e) { $('pp-clear-msg').textContent = 'Failed: ' + e.message; })
-        .then(function () { $('pp-clear-yes').disabled = false; $('pp-clear-confirm').hidden = true; $('pp-clear').hidden = false; loadCleanup(); });
+        .then(function () { $('pp-clear-yes').disabled = false; $('pp-clear-confirm').hidden = true; $('pp-clear').hidden = false; loadCleanup().then(loadPrefs); });
     });
   }
   function renderLog(d) {
@@ -362,9 +363,101 @@
     e.target.disabled = true; e.target.textContent = 'Restoring…';
     postJSON('cud-undo', [['id', id]]).then(function (d) {
       if (!d.ok) { e.target.textContent = d.error; return; }
-      loadCleanup();
+      loadCleanup().then(loadPrefs);
     }).catch(function (err) { e.target.textContent = err.message; });
   });
+
+  // ---------- email preferred, no address ----------
+  function patronLink(bn, name, card) {
+    return el('a', { href: '/cgi-bin/koha/members/moremember.pl?borrowernumber=' + encodeURIComponent(bn), text: (name || '').trim() || card || '#' + bn });
+  }
+  function loadPrefs() {
+    if (!CAN_MANAGE || !$('pp-prefs')) return Promise.resolve();
+    return getJSON('prefs').then(function (d) {
+      $('pp-prefs-total').textContent = fmt(d.total);
+      if (d.mode) $('pp-prefs-mode').value = d.mode;
+      $('pp-prefs-fields').textContent = d.fields && d.fields.length < 3
+        ? 'Following your EmailFieldPrimary setting, only ' + d.fields.join(', ') + ' counts as an address.' : '';
+      var tb = $('pp-prefs-table').querySelector('tbody'); tb.innerHTML = '';
+      if (!d.rows.length) tb.appendChild(el('tr', null, [el('td', { colspan: 7, class: 'pp-muted', text: 'Every patron set to get email notices has an address. Nice.' })]));
+      d.rows.forEach(function (r) {
+        var expired = r.dateexpiry && r.dateexpiry < TODAY;
+        tb.appendChild(el('tr', null, [
+          el('td', { class: 'pp-check' }, [el('input', { type: 'checkbox', class: 'pp-pref', value: r.borrowernumber, 'aria-label': 'Select ' + ((r.name || '').trim() || r.cardnumber) })]),
+          el('td', null, [patronLink(r.borrowernumber, r.name, r.cardnumber), r.cardnumber ? el('div', { class: 'pp-muted', text: r.cardnumber }) : null]),
+          el('td', { text: r.branchcode || '' }), el('td', { text: r.categorycode || '' }),
+          el('td', null, [r.dateexpiry ? el('span', { class: expired ? 'pp-tag is-expired' : '', text: expired ? 'Expired ' + r.dateexpiry : r.dateexpiry }) : el('span', { class: 'pp-muted', text: '—' })]),
+          el('td', { text: (r.smsalertnumber || '').trim() || '—' }),
+          el('td', { text: r.notices || '' }) ]));
+      });
+      $('pp-prefs-all').checked = false; updatePrefsButton();
+      var foot = d.total > d.rows.length ? 'Showing the first ' + fmt(d.rows.length) + ' of ' + fmt(d.total) + '. The CSV has all of them.' : '';
+      $('pp-prefs-msg').textContent = foot;
+      renderPrefsLog(d.log || []);
+    }).catch(function (e) {
+      var tb = $('pp-prefs-table').querySelector('tbody'); tb.innerHTML = '';
+      tb.appendChild(el('tr', null, [el('td', { colspan: 7, class: 'pp-muted', text: 'Could not load: ' + e.message })]));
+      showError('Patrons without an address: ' + e.message);
+    });
+  }
+  var WHY = { manual: 'Switched by hand' };
+  function renderPrefsLog(rows) {
+    var tb = $('pp-prefs-log').querySelector('tbody'); tb.innerHTML = '';
+    if (!rows.length) tb.appendChild(el('tr', null, [el('td', { colspan: 6, class: 'pp-muted', text: 'No preferences have been changed yet.' })]));
+    rows.forEach(function (r) {
+      var why = WHY[r.source] || (/^cleanup:/.test(r.source || '') ? 'Address was cleared' : (r.source || ''));
+      tb.appendChild(el('tr', { class: r.undone_at ? 'is-undone' : '' }, [
+        el('td', { text: r.changed_at }),
+        el('td', null, [patronLink(r.borrowernumber, r.name, r.cardnumber)]),
+        el('td', { text: fmt(r.notices) + ' notice' + (r.notices == 1 ? '' : 's') + ': ' + (r.summary || '') }),
+        el('td', { text: why }),
+        el('td', { text: r.changed_by ? (r.changed_by_name || '#' + r.changed_by) : 'Automatic' }),
+        el('td', null, [r.undone_at ? el('span', { class: 'pp-muted', text: 'Undone ' + r.undone_at })
+          : el('button', { type: 'button', class: 'pp-button pp-secondary pp-small', 'data-prefs-undo': r.id, text: 'Undo' })]) ]));
+    });
+  }
+  function prefsSelected() { return Array.prototype.map.call(root.querySelectorAll('.pp-pref:checked'), function (c) { return c.value; }); }
+  function updatePrefsButton() {
+    var n = prefsSelected().length;
+    $('pp-prefs-go').disabled = !n;
+    $('pp-prefs-go').textContent = n ? 'Switch ' + n + ' selected' : 'Switch selected patrons';
+  }
+  if ($('pp-prefs')) {
+    $('pp-prefs-table').addEventListener('change', function (e) {
+      if (e.target.id === 'pp-prefs-all') root.querySelectorAll('.pp-pref').forEach(function (c) { c.checked = e.target.checked; });
+      updatePrefsButton();
+    });
+    $('pp-prefs-go').addEventListener('click', function () {
+      var n = prefsSelected().length, sms = $('pp-prefs-mode').value === 'sms_or_print';
+      $('pp-prefs-confirm').querySelector('.pp-confirm-text').textContent =
+        'Move the email notices of ' + n + ' patron' + (n === 1 ? '' : 's') + ' to ' + (sms ? 'SMS or print' : 'print') + '?';
+      $('pp-prefs-confirm').hidden = false; $('pp-prefs-go').hidden = true;
+    });
+    $('pp-prefs-no').addEventListener('click', function () { $('pp-prefs-confirm').hidden = true; $('pp-prefs-go').hidden = false; });
+    $('pp-prefs-yes').addEventListener('click', function () {
+      var items = prefsSelected();
+      $('pp-prefs-yes').disabled = true; $('pp-prefs-msg').textContent = 'Switching…';
+      var pairs = items.map(function (i) { return ['item', i]; }); pairs.push(['mode', $('pp-prefs-mode').value]);
+      postJSON('cud-prefs-switch', pairs).then(function (d) {
+        var ok = d.results.filter(function (r) { return r.ok && r.changed; }).length;
+        var bad = d.results.filter(function (r) { return !r.ok; });
+        return loadPrefs().then(function () {
+          $('pp-prefs-msg').textContent = 'Switched ' + ok + ' patron' + (ok === 1 ? '' : 's') + '.' +
+            (bad.length ? ' Skipped ' + bad.length + ': ' + bad.map(function (r) { return '#' + r.borrowernumber + ' (' + r.error + ')'; }).join('; ') : '');
+        });
+      }).catch(function (e) { $('pp-prefs-msg').textContent = 'Failed: ' + e.message; })
+        .then(function () { $('pp-prefs-yes').disabled = false; $('pp-prefs-confirm').hidden = true; $('pp-prefs-go').hidden = false; });
+    });
+    $('pp-prefs-log').addEventListener('click', function (e) {
+      var id = e.target.getAttribute && e.target.getAttribute('data-prefs-undo');
+      if (!id) return;
+      e.target.disabled = true; e.target.textContent = 'Restoring…';
+      postJSON('cud-prefs-undo', [['id', id]]).then(function (d) {
+        if (!d.ok) { e.target.textContent = d.error; return; }
+        loadPrefs();
+      }).catch(function (err) { e.target.textContent = err.message; });
+    });
+  }
 
   // ---------- load ----------
   function loadAll() {
@@ -389,5 +482,6 @@
   } else preset('30');
   loadAll()
     .then(function () { return loadSmtp(false); })
-    .then(function () { return loadCleanup(); });
+    .then(function () { return loadCleanup(); })
+    .then(function () { return loadPrefs(); });
 })();

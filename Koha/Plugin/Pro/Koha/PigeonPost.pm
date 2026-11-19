@@ -13,8 +13,9 @@ use Koha::Plugin::Pro::Koha::PigeonPost::Stats;
 use Koha::Plugin::Pro::Koha::PigeonPost::Cleanup;
 use Koha::Plugin::Pro::Koha::PigeonPost::Digest;
 use Koha::Plugin::Pro::Koha::PigeonPost::Smtp;
+use Koha::Plugin::Pro::Koha::PigeonPost::Prefs;
 
-our $VERSION = '0.1.2';
+our $VERSION = '0.2.0';
 our $metadata = {
     name            => 'Pigeon Post',
     author          => 'koha.pro',
@@ -36,6 +37,8 @@ my %DEFAULTS = (
     digest_to      => '',
     digest_weekday => 1,    # Monday
     smtp_cache_s   => 60,
+    switch_on_clear => 1,         # clearing an address also moves that patron's email notices
+    switch_to       => 'print',   # 'print' or 'sms_or_print'
 );
 
 # Assets are addressed by short keys (no file names in the URL, which some WAF
@@ -73,9 +76,17 @@ sub settings {
 
 sub stats_table { $_[0]->get_qualified_table_name('daily_stats') }
 sub log_table   { $_[0]->get_qualified_table_name('cleanup_log') }
+sub prefs_table { $_[0]->get_qualified_table_name('prefs_log') }
 
 sub _stats   { my $s = shift; Koha::Plugin::Pro::Koha::PigeonPost::Stats->new(dbh => C4::Context->dbh, rollup_table => $s->stats_table) }
 sub _cleanup { my $s = shift; Koha::Plugin::Pro::Koha::PigeonPost::Cleanup->new(dbh => C4::Context->dbh, log_table => $s->log_table) }
+sub _prefs {
+    my $s = shift;
+    my $primary = C4::Context->preference('EmailFieldPrimary') // C4::Context->preference('AutoEmailPrimaryAddress');
+    return Koha::Plugin::Pro::Koha::PigeonPost::Prefs->new(
+        dbh => C4::Context->dbh, log_table => $s->prefs_table,
+        notice_fields => Koha::Plugin::Pro::Koha::PigeonPost::Prefs::notice_fields($primary, C4::Context->preference('EmailFieldSelection')));
+}
 
 sub install {
     my ($self) = @_;
@@ -105,17 +116,34 @@ sub install {
         KEY pp_log_borrower (borrowernumber),
         KEY pp_log_cleared (cleared_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci});
+    my $pt = $self->prefs_table;
+    $dbh->do(qq{CREATE TABLE IF NOT EXISTS $pt (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        borrowernumber INT NOT NULL,
+        notices INT NOT NULL DEFAULT 0,
+        summary VARCHAR(255) NULL,
+        changes TEXT NOT NULL,
+        source VARCHAR(32) NULL,
+        changed_at DATETIME NOT NULL,
+        changed_by INT NULL,
+        undone_at DATETIME NULL,
+        undone_by INT NULL,
+        KEY pp_prefs_borrower (borrowernumber),
+        KEY pp_prefs_changed (changed_at),
+        KEY pp_prefs_source (source)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci});
     $self->_rollup;    # backfill whatever queue history Koha still has
     return 1;
 }
 
-sub upgrade { my ($self) = @_; return $self->install }    # schema steps are idempotent for 0.1.x
+sub upgrade { my ($self) = @_; return $self->install }    # CREATE TABLE IF NOT EXISTS: adds prefs_log for 0.2.0
 
 sub uninstall {
     my ($self) = @_;
     my $dbh = C4::Context->dbh;
     $dbh->do('DROP TABLE IF EXISTS ' . $self->stats_table);
     $dbh->do('DROP TABLE IF EXISTS ' . $self->log_table);
+    $dbh->do('DROP TABLE IF EXISTS ' . $self->prefs_table);
     return 1;
 }
 
@@ -167,15 +195,19 @@ sub tool {
     my $op  = $cgi->param('op') // '';
 
     return $self->_asset(scalar $cgi->param('asset')) if $op eq 'asset';
+    return $self->_prefs_csv if $op eq 'prefs-csv';
 
     my %json_get = (
         data    => \&_op_data,
         smtp    => \&_op_smtp,
         cleanup => \&_op_cleanup,
+        prefs   => \&_op_prefs,
     );
     my %json_post = (
         'cud-cleanup-apply' => \&_op_cleanup_apply,
         'cud-undo'          => \&_op_undo,
+        'cud-prefs-switch'  => \&_op_prefs_switch,
+        'cud-prefs-undo'    => \&_op_prefs_undo,
     );
     if (my $h = $json_get{$op}) {
         my $r = eval { $h->($self) };
@@ -203,6 +235,8 @@ sub tool {
         threshold  => $s->{threshold},
         lookback   => $s->{lookback_days},
         auto       => $s->{auto_cleanup},
+        switch_on_clear => $s->{switch_on_clear},
+        switch_to  => $s->{switch_to},
         today      => today(),
     );
     $self->output_html($template->output);
@@ -307,14 +341,87 @@ sub _op_cleanup_apply {
     return { results => [], error => 'Nothing selected' } unless %want;
     # Never trust the client: only clear entries that are candidates right now.
     my @items = grep { $want{"$_->{borrowernumber}:$_->{field}"} } @{ $self->_candidates };
-    return { results => $self->_cleanup->apply(\@items, $self->_staff) };
+    return { results => $self->_cleanup->apply(\@items, $self->_staff, $self->_after_clear($self->_staff)) };
+}
+
+# After an address is cleared: if the patron is left with nothing Koha can email,
+# move their email notices to print/SMS so they don't start failing with NO_EMAIL.
+sub _after_clear {
+    my ($self, $staff) = @_;
+    return () unless $self->setting('switch_on_clear');
+    my $prefs = $self->_prefs;
+    my $mode  = $self->setting('switch_to');
+    return (after => sub {
+        my ($it, $log_id) = @_;
+        my $r = $prefs->switch($it->{borrowernumber}, mode => $mode, staff => $staff, source => "cleanup:$log_id");
+        return $r->{ok} && $r->{changed} ? { prefs_switched => $r->{changed}, prefs_summary => $r->{summary} } : {};
+    });
 }
 
 sub _op_undo {
     my ($self) = @_;
     my $id = $self->_cgi->param('id') // '';
     return { ok => 0, error => 'Bad id' } unless $id =~ /\A\d+\z/;
-    return $self->_cleanup->undo($id, $self->_staff);
+    my $r = $self->_cleanup->undo($id, $self->_staff);
+    if ($r->{ok}) {    # put back any notice preferences that clear switched
+        my $p = eval { $self->_prefs->undo_source("cleanup:$id", $self->_staff) };
+        $r->{prefs_restored} = $p ? scalar(grep { $_->{ok} } @$p) : 0;
+        $r->{prefs_error} = "$@" if $@;
+    }
+    return $r;
+}
+
+sub _op_prefs {
+    my ($self) = @_;
+    die "You need permission to edit patrons to see this list.\n" unless $self->can_manage;
+    my $p = $self->_prefs;
+    return {
+        total  => $p->count_missing,
+        rows   => $p->missing(limit => 1000),
+        fields => $p->{notice_fields},
+        mode   => $self->setting('switch_to'),
+        log    => $p->log_entries(100),
+    };
+}
+
+sub _op_prefs_switch {
+    my ($self) = @_;
+    my $cgi  = $self->_cgi;
+    my $mode = $cgi->param('mode') // '';
+    $mode = $self->setting('switch_to') unless $Koha::Plugin::Pro::Koha::PigeonPost::Prefs::MODE_OK{$mode};
+    my %seen;
+    my @bns = grep { !$seen{$_}++ } grep { /\A\d+\z/ } $cgi->multi_param('item');
+    return { results => [], error => 'Nothing selected' } unless @bns;
+    my $p = $self->_prefs;
+    my @res;
+    for my $bn (@bns) {    # switch() re-checks that the patron still has no address
+        my $r = eval { $p->switch($bn, mode => $mode, staff => $self->_staff, source => 'manual') } || { ok => 0, error => "$@" };
+        $r->{error} =~ s/\s+$// if defined $r->{error};
+        push @res, { borrowernumber => $bn, %$r };
+    }
+    return { results => \@res };
+}
+
+sub _op_prefs_undo {
+    my ($self) = @_;
+    my $id = $self->_cgi->param('id') // '';
+    return { ok => 0, error => 'Bad id' } unless $id =~ /\A\d+\z/;
+    return $self->_prefs->undo($id, $self->_staff);
+}
+
+sub _prefs_csv {
+    my ($self) = @_;
+    my $cgi = $self->_cgi;
+    unless ($self->can_manage) { print $cgi->header(-status => '403 Forbidden', -type => 'text/plain'); print 'You need permission to edit patrons.'; return }
+    my $rows = $self->_prefs->missing(limit => 100000);
+    require Encode;
+    my $line = \&Koha::Plugin::Pro::Koha::PigeonPost::Prefs::csv_line;
+    print $cgi->header(-type => 'text/csv', -charset => 'UTF-8', -cache_control => 'no-store',
+        -attachment => 'patrons-email-preferred-no-address-' . today() . '.csv');
+    print "\x{EF}\x{BB}\x{BF}";    # BOM so Excel reads UTF-8
+    print Encode::encode('UTF-8', $line->('Card number', 'Name', 'Library', 'Category', 'Expires', 'SMS number', 'Notices set to email', 'Borrowernumber'));
+    print Encode::encode('UTF-8', $line->(@$_{qw(cardnumber name branchcode categorycode dateexpiry smsalertnumber notices borrowernumber)})) for @$rows;
+    return;
 }
 
 # ---- configure page ---------------------------------------------------------
@@ -338,6 +445,9 @@ sub configure {
             push @errors, 'Choose at least one patron email field' unless @f;
             $n{fields}         = join ',', @f;
             $n{auto_cleanup}   = $cgi->param('auto_cleanup') ? 1 : 0;
+            $n{switch_on_clear} = $cgi->param('switch_on_clear') ? 1 : 0;
+            my $sw = $cgi->param('switch_to') // '';
+            if ($Koha::Plugin::Pro::Koha::PigeonPost::Prefs::MODE_OK{$sw}) { $n{switch_to} = $sw } else { push @errors, 'Pick where email notices should go' }
             $n{digest_enabled} = $cgi->param('digest_enabled') ? 1 : 0;
             my $wd = $cgi->param('digest_weekday') // '';
             if ($wd =~ /\A[0-6]\z/) { $n{digest_weekday} = $wd } else { push @errors, 'Pick a digest day' }
@@ -381,10 +491,20 @@ sub digest_data {
         reasons => $sum->{reasons}, letters => $sum->{by_letter}, queue => $sum->{queue},
         cleared    => $self->_cleanup->cleared_between($from, $to),
         candidates => scalar @{ $self->_candidates },
+        %{ $self->_digest_prefs($from, $to, $pf, $pt, $stats->has_failure_code) },
         smtp       => Koha::Plugin::Pro::Koha::PigeonPost::Smtp::check_all(timeout => 5),
         dashboard_url => $base ? $base . $self->_url('tool') : undef,
         library    => C4::Context->preference('LibraryName'),
     };
+}
+
+sub _digest_prefs {
+    my ($self, $from, $to, $pf, $pt, $has_fc) = @_;
+    my $p = $self->_prefs;
+    return eval {
+        { no_address => $p->count_missing, prefs_switched => $p->switched_between($from, $to),
+          no_email_week => $p->no_email_failures($from, $to, $has_fc), no_email_prev => $p->no_email_failures($pf, $pt, $has_fc) }
+    } || {};
 }
 
 sub send_digest {
@@ -409,7 +529,7 @@ sub run_auto_cleanup {
         if (@$cands > $s->{auto_cap}) {
             $result->{skipped} = scalar(@$cands) . " addresses are over the threshold, more than the per-run cap of $s->{auto_cap}. Review them on the dashboard.";
         } elsif (@$cands) {
-            my $res = $c->apply($cands, undef);
+            my $res = $c->apply($cands, undef, $self->_after_clear(undef));
             $result->{cleared} = grep { $_->{ok} } @$res;
             $result->{errors}  = [ map { "$_->{address}: $_->{error}" } grep { !$_->{ok} } @$res ];
         }

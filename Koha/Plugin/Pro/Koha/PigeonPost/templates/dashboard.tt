@@ -164,7 +164,9 @@
       <h3>Addresses with [% threshold | html %]+ failures in a row</h3>
       <p class="pp-muted">Looks back [% lookback | html %] days. Only failures since the address last worked are counted.
         Clearing one blanks that patron email field and drops its waiting messages, so the queue stops retrying.
-        Every clear is logged and can be undone. <a href="[% config_url | html %]">Change these settings</a></p>
+        Every clear is logged and can be undone.
+        [% IF switch_on_clear %]If that leaves the patron with no address, their email notices also move to [% switch_to == 'sms_or_print' ? 'SMS (or print if they have no SMS number)' : 'print' %], so they keep getting them.[% END %]
+        <a href="[% config_url | html %]">Change these settings</a></p>
       <div id="pp-health" class="pp-hold" hidden></div>
       <div class="pp-table-scroll">
         <table class="pp-table" id="pp-candidates">
@@ -189,6 +191,46 @@
         <table class="pp-table" id="pp-log">
           <thead><tr><th>When</th><th>Patron</th><th>Field</th><th>Old address</th><th class="num">Failures</th><th>By</th><th></th></tr></thead>
           <tbody><tr><td colspan="7" class="pp-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="pp-card pp-span-3" id="pp-prefs">
+      <div class="pp-card-top">
+        <p class="pp-eyebrow">Email preferred, no address</p>
+        <a class="pp-button pp-secondary pp-small" id="pp-prefs-csv" href="[% tool_url | html %]&amp;op=prefs-csv">Download CSV</a>
+      </div>
+      <h3>Patrons set to get email notices but with no address <span class="pp-count" id="pp-prefs-total"></span></h3>
+      <p class="pp-muted">Every email notice for these patrons fails with <span class="pp-code">NO_EMAIL</span>, so they miss holds, overdues and other notices.
+        Ask for a new address at the desk (the CSV is handy for that), or switch their email notices to print or SMS here. Each switch is logged and can be undone.
+        <span id="pp-prefs-fields"></span></p>
+      <div class="pp-table-scroll">
+        <table class="pp-table" id="pp-prefs-table">
+          <thead><tr><th class="pp-check"><input type="checkbox" id="pp-prefs-all" aria-label="Select all"></th>
+            <th>Patron</th><th>Library</th><th>Category</th><th>Expires</th><th>SMS number</th><th>Notices set to email</th></tr></thead>
+          <tbody><tr><td colspan="7" class="pp-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pp-actions">
+        <label class="pp-inline">Switch to
+          <select id="pp-prefs-mode">
+            <option value="print">Print</option>
+            <option value="sms_or_print">SMS if they have a number, otherwise print</option>
+          </select></label>
+        <button type="button" class="pp-button pp-primary" id="pp-prefs-go" disabled>Switch selected patrons</button>
+        <span id="pp-prefs-confirm" hidden>
+          <span class="pp-confirm-text"></span>
+          <button type="button" class="pp-button pp-danger" id="pp-prefs-yes">Yes, switch them</button>
+          <button type="button" class="pp-button pp-secondary" id="pp-prefs-no">Cancel</button>
+        </span>
+        <span id="pp-prefs-msg" class="pp-muted" role="status"></span>
+      </div>
+
+      <h4 class="pp-subhead">Preference changes</h4>
+      <div class="pp-table-scroll">
+        <table class="pp-table" id="pp-prefs-log">
+          <thead><tr><th>When</th><th>Patron</th><th>What changed</th><th>Why</th><th>By</th><th></th></tr></thead>
+          <tbody><tr><td colspan="6" class="pp-muted">Loading…</td></tr></tbody>
         </table>
       </div>
     </section>

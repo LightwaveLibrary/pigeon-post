@@ -16,6 +16,11 @@
   - Clears them so the queue stops retrying, and drops their waiting messages.
   - Every clear is logged and can be undone.
   - It can also run automatically each night, with safety limits (see below).
+- **Email preferred, no address:**
+  - Lists patrons whose messaging preferences say email but who have no address Koha can use (it follows the `EmailFieldPrimary` system preference). Every email notice for them fails with `NO_EMAIL`.
+  - Download the list as CSV, for example so desk staff can ask for a new address.
+  - Switch selected patrons' email notices to print, or to SMS when they have a number. Each switch is logged and can be undone.
+  - When an address cleanup leaves a patron with no address, their email notices are switched the same way (on by default; undoing the clear puts them back).
 - **Weekly digest:** a summary email of the week, sent to whichever addresses you choose.
 
 Requires Koha 22.11 or later.
@@ -28,15 +33,15 @@ Requires Koha 22.11 or later.
 
 ## Permissions
 - **Viewing the dashboard:** needs Koha's plugin *tool* permission.
-- **Cleanup and settings:** also need **Patrons → edit_borrowers** (or superlibrarian).
+- **Cleanup, preference switching and settings:** also need **Patrons → edit_borrowers** (or superlibrarian).
 
 ## Safety
-- **What it changes in Koha:** only the patron email fields you choose to clear. It also marks that address's waiting messages as `deleted`; nothing is physically deleted from the queue.
+- **What it changes in Koha:** only the patron email fields you choose to clear, and the messaging preferences of patrons left with no address (email moved to print or SMS). It also marks a cleared address's waiting messages as `deleted`; nothing is physically deleted from the queue.
 - **Automatic cleanup is off by default.** When it is on, it skips the run in two cases:
   - more than half of the last day's emails failed, which points to an SMTP outage rather than bad addresses
   - more addresses are over the threshold than the per-run cap (default 50)
 - **Failure codes that say nothing about the address are ignored:** `NO_EMAIL`, `NO_FROM`, `INVALID_BORNUMBER`, `DUPLICATE_MESSAGE`, `MISSING_SMS`.
-- **All-time totals survive Koha's cleanup.** Koha's `cleanup_database.pl --mail` purges old queue rows, so the plugin saves daily totals in its own table (`…_daily_stats`). Uninstalling drops only the plugin's own two tables.
+- **All-time totals survive Koha's cleanup.** Koha's `cleanup_database.pl --mail` purges old queue rows, so the plugin saves daily totals in its own table (`…_daily_stats`). Uninstalling drops only the plugin's own three tables.
 
 ## Development
 ```

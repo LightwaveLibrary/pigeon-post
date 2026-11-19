@@ -192,3 +192,11 @@
 /* inline logo */
 .pigeon .pp-logo { display: block; width: 44px; height: 44px; }
 .pigeon .pp-logo svg { display: block; width: 44px; height: 44px; }
+.pigeon .pp-count { display: inline-block; margin-left: 6px; padding: 1px 9px; border-radius: 999px; background: var(--pp-pilot-bg);
+  border: 1px solid var(--pp-pilot-border); color: var(--pp-blue); font-size: 13px; font-weight: 700; letter-spacing: 0; vertical-align: 2px;
+  font-variant-numeric: tabular-nums; }
+.pigeon .pp-count:empty { display: none; }
+.pigeon .pp-inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--pp-ink); margin: 0; }
+.pigeon .pp-tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
+  padding: 1px 7px; border-radius: 999px; background: var(--pp-bar-track); color: var(--pp-muted); }
+.pigeon .pp-tag.is-expired { background: #fdf2f1; color: var(--pp-bad); }

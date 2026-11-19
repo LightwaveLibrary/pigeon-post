@@ -121,8 +121,9 @@ sub candidates {
 
 # $items: arrayref of candidate hashes (already validated by the caller against
 # a fresh candidates() call). $staff: borrowernumber of the acting user or undef (auto).
+# %o: after => sub { my ($item, $log_id) = @_; returns a hashref merged into the result }
 sub apply {
-    my ($self, $items, $staff) = @_;
+    my ($self, $items, $staff, %o) = @_;
     require Koha::Patrons;
     my $dbh = $self->{dbh};
     my $t   = $self->{log_table};
@@ -151,8 +152,14 @@ sub apply {
                          VALUES (?,?,?,?,?,?,NOW(),?)},
                 undef, $it->{borrowernumber}, $it->{field}, $it->{address}, $it->{fails}, $it->{last_code}, $marked, $staff);
             $res->{pending_marked} = $marked;
+            $res->{log_id} = $dbh->{mysql_insertid} // $dbh->last_insert_id(undef, undef, $t, 'id');
             1;
         };
+        if ($ok && $o{after}) {    # follow-up work must never undo a successful clear
+            my $extra = eval { $o{after}->($it, $res->{log_id}) };
+            if ($@) { ($res->{after_error} = $@) =~ s/\s+$//; }
+            elsif (ref $extra eq 'HASH') { %$res = (%$res, %$extra) }
+        }
         $res->{ok} = $ok ? 1 : 0;
         ($res->{error} = $@) =~ s/\s+$// unless $ok;
         push @results, $res;

@@ -53,9 +53,14 @@ Shapes and type:
 
 ## Data-safety rules
 - Read Koha tables only through placeholders. Never write Koha core tables except:
-  clearing a patron email field via `Koha::Patrons` (explicit click or opted-in auto mode) and
-  marking that address's pending `message_queue` rows `status='deleted'` (never DELETE).
-- Plugin-owned tables only: `_daily_stats`, `_cleanup_log` (via `get_qualified_table_name`).
+  - clearing a patron email field via `Koha::Patrons` (explicit click or opted-in auto mode);
+  - marking that address's pending `message_queue` rows `status='deleted'` (never DELETE);
+  - for patrons with no address Koha can email (per `EmailFieldPrimary`), moving their
+    `borrower_message_transport_preferences` rows from `email` to `print`/`sms` (Prefs.pm), only on an
+    explicit click or as the opted-in follow-up to an address clear. Re-check "no address" at write time,
+    only add a transport the notice offers in `message_transports`, run each patron in a transaction, and
+    log the exact rows changed so undo can restore them.
+- Plugin-owned tables only: `_daily_stats`, `_cleanup_log`, `_prefs_log` (via `get_qualified_table_name`).
   `uninstall` drops only these.
 - Auto-cleanup must keep the outage guard (skip when >50% of last-24h sends failed) and the per-run cap.
 - Test on a disposable koha-testing-docker instance, never production.

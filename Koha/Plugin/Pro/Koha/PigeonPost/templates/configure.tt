@@ -68,6 +68,15 @@
         <label>Most addresses to clear automatically per night
           <input type="number" name="auto_cap" min="1" max="10000" value="[% s.auto_cap | html %]" required>
           <small>If more than this are over the threshold, nothing is cleared and they wait for review on the dashboard.</small></label>
+        <label class="pp-switch"><input type="checkbox" name="switch_on_clear" value="1" [% 'checked' IF s.switch_on_clear %]>
+          <span><b>Keep patrons getting notices after their address is cleared</b><br>
+          <small>If clearing an address leaves the patron with no email Koha can use, their email notice preferences are moved so the notices don't start failing with NO_EMAIL. Undoing the clear puts them back.</small></span></label>
+        <label>Move email notices to
+          <select name="switch_to">
+            <option value="print" [% 'selected' IF s.switch_to == 'print' %]>Print</option>
+            <option value="sms_or_print" [% 'selected' IF s.switch_to == 'sms_or_print' %]>SMS if the patron has a number, otherwise print</option>
+          </select>
+          <small>Also the default on the dashboard's "Email preferred, no address" list. Notices with no print or SMS version just stop being emailed.</small></label>
       </section>
 
       <section class="pp-card">
