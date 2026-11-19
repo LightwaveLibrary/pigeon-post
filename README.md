@@ -54,3 +54,7 @@ PIGEON_SEED_OK=1 perl tools/seed_fixtures.pl   # on a disposable koha-testing-do
 PIGEON_SEED_OK=1 perl tools/seed_fixtures.pl --purge
 ```
 The look follows koha.pro/rustsearch. See `CLAUDE.md` for the colors and design rules.
+
+## License
+Pigeon Post is free software, licensed under the [GNU General Public License v3.0](LICENSE), the same license as Koha.
+It bundles [Chart.js](https://www.chartjs.org/) 4.4.1, which is MIT-licensed.
