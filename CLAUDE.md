@@ -60,7 +60,12 @@ Shapes and type:
     explicit click or as the opted-in follow-up to an address clear. Re-check "no address" at write time,
     only add a transport the notice offers in `message_transports`, run each patron in a transaction, and
     log the exact rows changed so undo can restore them.
-- Plugin-owned tables only: `_daily_stats`, `_cleanup_log`, `_prefs_log` (via `get_qualified_table_name`).
+  - marking pending **print** `message_queue` rows older than the configured age (default 90 days)
+    `status='deleted'` (PrintQueue.pm), on an explicit click or opted-in nightly run (off by default). The age
+    comes from saved settings, never the request; record every `message_id` in `_print_cleared` so undo
+    can set them back to `pending`.
+- Plugin-owned tables only: `_daily_stats`, `_cleanup_log`, `_prefs_log`, `_print_log`, `_print_cleared`
+  (via `get_qualified_table_name`).
   `uninstall` drops only these.
 - Auto-cleanup must keep the outage guard (skip when >50% of last-24h sends failed) and the per-run cap.
 - Test on a disposable koha-testing-docker instance, never production.

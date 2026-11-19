@@ -39,6 +39,7 @@ sub _fmt { my $n = shift // 0; 1 while $n =~ s/^(\d+)(\d{3})/$1,$2/; return $n }
 #        reasons => [{code,n}], letters => [{letter_code,sent,failed}],
 #        cleared, candidates, queue => {pending, oldest_age_minutes},
 #        no_address, no_email_week, no_email_prev, prefs_switched (optional),
+#        print => {pending, old, days, cleared} (optional),
 #        smtp => [{name, light, ms, message}], dashboard_url, library }
 sub build_html {
     my ($d) = @_;
@@ -104,6 +105,14 @@ sub build_html {
             . '</table>'
             . ($d->{no_address} ? qq{<p style="color:$C{muted};font-size:12px;margin:10px 0 0">Their email notices fail every time. Switch them to print or SMS, or ask for a new address, from the dashboard.</p>} : '')
             . '</div>' : '')
+        . ($d->{print} ? do { my $pq = $d->{print};
+            qq{<div style="$card"><p style="$eyebrow">Unprinted print notices</p><table role="presentation" width="100%" style="border-collapse:collapse;font-size:13px">}
+            . $tr->('Print notices waiting to be printed', _fmt($pq->{pending}))
+            . $tr->("Older than $pq->{days} days", ($pq->{old} ? qq{<span style="color:$C{bad}">} . _fmt($pq->{old}) . '</span>' : '0'))
+            . $tr->('Cleared this week', _fmt($pq->{cleared}))
+            . '</table>'
+            . ($pq->{old} ? qq{<p style="color:$C{muted};font-size:12px;margin:10px 0 0">Print notices only reach patrons if someone runs gather_print_notices.pl and prints the result.</p>} : '')
+            . '</div>' } : '')
         . ($d->{dashboard_url} ? qq{<p style="margin:6px 0 22px"><a href="} . $e->($d->{dashboard_url}) . qq{" style="display:inline-block;background:$C{blue};color:#fff;text-decoration:none;font-weight:650;font-size:13px;border-radius:5px;padding:12px 18px">Open the Pigeon Post Dashboard</a></p>} : '')
         . qq{</td></tr>
 <tr><td style="padding:14px 26px 26px;font-size:10px;color:$C{muted};border-top:1px solid $C{line}">Sent by the Pigeon Post plugin for } . $e->($d->{library} // 'Koha') . qq{ · koha.pro</td></tr>

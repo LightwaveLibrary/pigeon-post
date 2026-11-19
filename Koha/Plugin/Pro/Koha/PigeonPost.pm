@@ -14,8 +14,9 @@ use Koha::Plugin::Pro::Koha::PigeonPost::Cleanup;
 use Koha::Plugin::Pro::Koha::PigeonPost::Digest;
 use Koha::Plugin::Pro::Koha::PigeonPost::Smtp;
 use Koha::Plugin::Pro::Koha::PigeonPost::Prefs;
+use Koha::Plugin::Pro::Koha::PigeonPost::PrintQueue;
 
-our $VERSION = '0.2.0';
+our $VERSION = '0.3.0';
 our $metadata = {
     name            => 'Pigeon Post',
     author          => 'koha.pro',
@@ -39,6 +40,8 @@ my %DEFAULTS = (
     smtp_cache_s   => 60,
     switch_on_clear => 1,         # clearing an address also moves that patron's email notices
     switch_to       => 'print',   # 'print' or 'sms_or_print'
+    print_clear_auto => 0,        # nightly: clear unprinted print notices older than print_clear_days
+    print_clear_days => 90,
 );
 
 # Assets are addressed by short keys (no file names in the URL, which some WAF
@@ -77,6 +80,9 @@ sub settings {
 sub stats_table { $_[0]->get_qualified_table_name('daily_stats') }
 sub log_table   { $_[0]->get_qualified_table_name('cleanup_log') }
 sub prefs_table { $_[0]->get_qualified_table_name('prefs_log') }
+sub print_log_table { $_[0]->get_qualified_table_name('print_log') }
+sub print_ids_table { $_[0]->get_qualified_table_name('print_cleared') }
+sub _print { my $s = shift; Koha::Plugin::Pro::Koha::PigeonPost::PrintQueue->new(dbh => C4::Context->dbh, log_table => $s->print_log_table, ids_table => $s->print_ids_table) }
 
 sub _stats   { my $s = shift; Koha::Plugin::Pro::Koha::PigeonPost::Stats->new(dbh => C4::Context->dbh, rollup_table => $s->stats_table) }
 sub _cleanup { my $s = shift; Koha::Plugin::Pro::Koha::PigeonPost::Cleanup->new(dbh => C4::Context->dbh, log_table => $s->log_table) }
@@ -132,18 +138,36 @@ sub install {
         KEY pp_prefs_changed (changed_at),
         KEY pp_prefs_source (source)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci});
+    my ($plt, $pit) = ($self->print_log_table, $self->print_ids_table);
+    $dbh->do(qq{CREATE TABLE IF NOT EXISTS $plt (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        days INT NOT NULL,
+        cutoff DATETIME NOT NULL,
+        cleared INT NOT NULL DEFAULT 0,
+        source VARCHAR(32) NULL,
+        ran_at DATETIME NOT NULL,
+        ran_by INT NULL,
+        undone_at DATETIME NULL,
+        undone_by INT NULL,
+        KEY pp_print_ran (ran_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci});
+    $dbh->do(qq{CREATE TABLE IF NOT EXISTS $pit (
+        log_id INT NOT NULL,
+        message_id INT NOT NULL,
+        PRIMARY KEY (log_id, message_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci});
     $self->_rollup;    # backfill whatever queue history Koha still has
     return 1;
 }
 
-sub upgrade { my ($self) = @_; return $self->install }    # CREATE TABLE IF NOT EXISTS: adds prefs_log for 0.2.0
+sub upgrade { my ($self) = @_; return $self->install }    # CREATE TABLE IF NOT EXISTS: adds prefs_log (0.2.0), print_log + print_cleared (0.3.0)
 
 sub uninstall {
     my ($self) = @_;
     my $dbh = C4::Context->dbh;
     $dbh->do('DROP TABLE IF EXISTS ' . $self->stats_table);
     $dbh->do('DROP TABLE IF EXISTS ' . $self->log_table);
-    $dbh->do('DROP TABLE IF EXISTS ' . $self->prefs_table);
+    $dbh->do('DROP TABLE IF EXISTS ' . $_) for $self->prefs_table, $self->print_log_table, $self->print_ids_table;
     return 1;
 }
 
@@ -202,12 +226,15 @@ sub tool {
         smtp    => \&_op_smtp,
         cleanup => \&_op_cleanup,
         prefs   => \&_op_prefs,
+        print   => \&_op_print,
     );
     my %json_post = (
         'cud-cleanup-apply' => \&_op_cleanup_apply,
         'cud-undo'          => \&_op_undo,
         'cud-prefs-switch'  => \&_op_prefs_switch,
         'cud-prefs-undo'    => \&_op_prefs_undo,
+        'cud-print-clear'   => \&_op_print_clear,
+        'cud-print-undo'    => \&_op_print_undo,
     );
     if (my $h = $json_get{$op}) {
         my $r = eval { $h->($self) };
@@ -409,6 +436,28 @@ sub _op_prefs_undo {
     return $self->_prefs->undo($id, $self->_staff);
 }
 
+sub _op_print {
+    my ($self) = @_;
+    die "You need permission to edit patrons to manage the print queue.\n" unless $self->can_manage;
+    my $q = $self->_print;
+    my $sum = $q->summary($self->setting('print_clear_days'));
+    return { %$sum, auto => $self->setting('print_clear_auto') ? 1 : 0, log => $q->log_entries(50),
+             last_auto => scalar eval { JSON->new->allow_nonref->decode($self->retrieve_data('last_print_clear') // 'null') } };
+}
+
+sub _op_print_clear {
+    my ($self) = @_;
+    # The age limit comes from the saved setting, never from the request.
+    return $self->_print->clear($self->setting('print_clear_days'), staff => $self->_staff, source => 'manual');
+}
+
+sub _op_print_undo {
+    my ($self) = @_;
+    my $id = $self->_cgi->param('id') // '';
+    return { ok => 0, error => 'Bad id' } unless $id =~ /\A\d+\z/;
+    return $self->_print->undo($id, $self->_staff);
+}
+
 sub _prefs_csv {
     my ($self) = @_;
     my $cgi = $self->_cgi;
@@ -448,6 +497,9 @@ sub configure {
             $n{switch_on_clear} = $cgi->param('switch_on_clear') ? 1 : 0;
             my $sw = $cgi->param('switch_to') // '';
             if ($Koha::Plugin::Pro::Koha::PigeonPost::Prefs::MODE_OK{$sw}) { $n{switch_to} = $sw } else { push @errors, 'Pick where email notices should go' }
+            $n{print_clear_auto} = $cgi->param('print_clear_auto') ? 1 : 0;
+            my $pd = $cgi->param('print_clear_days') // '';
+            if ($pd =~ /\A\d+\z/ && $pd >= 1 && $pd <= 3650) { $n{print_clear_days} = $pd } else { push @errors, 'Print notice age must be 1 to 3650 days' }
             $n{digest_enabled} = $cgi->param('digest_enabled') ? 1 : 0;
             my $wd = $cgi->param('digest_weekday') // '';
             if ($wd =~ /\A[0-6]\z/) { $n{digest_weekday} = $wd } else { push @errors, 'Pick a digest day' }
@@ -492,6 +544,7 @@ sub digest_data {
         cleared    => $self->_cleanup->cleared_between($from, $to),
         candidates => scalar @{ $self->_candidates },
         %{ $self->_digest_prefs($from, $to, $pf, $pt, $stats->has_failure_code) },
+        print => scalar eval { my $q = $self->_print; +{ %{ $q->summary($self->setting('print_clear_days')) }, cleared => $q->cleared_between($from, $to) } },
         smtp       => Koha::Plugin::Pro::Koha::PigeonPost::Smtp::check_all(timeout => 5),
         dashboard_url => $base ? $base . $self->_url('tool') : undef,
         library    => C4::Context->preference('LibraryName'),
@@ -502,7 +555,7 @@ sub _digest_prefs {
     my ($self, $from, $to, $pf, $pt, $has_fc) = @_;
     my $p = $self->_prefs;
     return eval {
-        { no_address => $p->count_missing, prefs_switched => $p->switched_between($from, $to),
+        +{ no_address => $p->count_missing, prefs_switched => $p->switched_between($from, $to),
           no_email_week => $p->no_email_failures($from, $to, $has_fc), no_email_prev => $p->no_email_failures($pf, $pt, $has_fc) }
     } || {};
 }
@@ -544,6 +597,11 @@ sub cronjob_nightly {
     if ($self->setting('auto_cleanup')) {
         my $r = eval { $self->run_auto_cleanup } || { error => "$@" };
         print 'Pigeon Post auto-cleanup: ' . ($r->{skipped} // $r->{error} // "cleared $r->{cleared}") . "\n";
+    }
+    if ($self->setting('print_clear_auto')) {
+        my $r = eval { $self->_print->clear($self->setting('print_clear_days'), source => 'auto') } || { ok => 0, error => "$@" };
+        $self->store_data({ last_print_clear => JSON::encode_json({ at => scalar(localtime), %$r }) });
+        print 'Pigeon Post print queue: ' . ($r->{ok} ? "cleared $r->{cleared} unprinted notice(s)" : "failed: $r->{error}") . "\n";
     }
     if ($self->setting('digest_enabled')
         && Koha::Plugin::Pro::Koha::PigeonPost::Digest::should_send(

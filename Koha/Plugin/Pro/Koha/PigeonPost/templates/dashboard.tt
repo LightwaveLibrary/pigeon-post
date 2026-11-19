@@ -234,6 +234,40 @@
         </table>
       </div>
     </section>
+
+    <section class="pp-card pp-span-3" id="pp-print">
+      <div class="pp-card-top">
+        <p class="pp-eyebrow">Unprinted print notices</p>
+        <span class="pp-status-label" id="pp-print-auto"></span>
+      </div>
+      <h3>Print notices nobody has printed</h3>
+      <p class="pp-muted">Print notices only reach patrons if someone runs Koha's gather_print_notices.pl and prints the result. Ones that sit in the queue for months won't be printed now.
+        Clearing marks them "deleted" in the queue (nothing is removed) and can be undone. <a href="[% config_url | html %]">Change the age or turn on nightly clearing</a></p>
+      <div class="pp-print-stats">
+        <div><span class="pp-print-num" id="pp-print-pending">—</span><span class="pp-muted">waiting to be printed</span></div>
+        <div><span class="pp-print-num pp-print-old" id="pp-print-old">—</span><span class="pp-muted" id="pp-print-old-label">older than the limit</span></div>
+        <div><span class="pp-print-num" id="pp-print-oldest">—</span><span class="pp-muted">oldest waiting</span></div>
+      </div>
+      <div class="pp-bars" id="pp-print-letters"></div>
+      <div class="pp-actions">
+        <button type="button" class="pp-button pp-primary" id="pp-print-go" disabled>Clear old print notices</button>
+        <span id="pp-print-confirm" hidden>
+          <span class="pp-confirm-text"></span>
+          <button type="button" class="pp-button pp-danger" id="pp-print-yes">Yes, clear them</button>
+          <button type="button" class="pp-button pp-secondary" id="pp-print-no">Cancel</button>
+        </span>
+        <span id="pp-print-msg" class="pp-muted" role="status"></span>
+      </div>
+
+      <h4 class="pp-subhead">Print queue clears</h4>
+      <p class="pp-muted" id="pp-print-last-auto"></p>
+      <div class="pp-table-scroll">
+        <table class="pp-table" id="pp-print-log">
+          <thead><tr><th>When</th><th>Older than</th><th class="num">Notices cleared</th><th>By</th><th></th></tr></thead>
+          <tbody><tr><td colspan="5" class="pp-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
     [% END %]
   </div>
 

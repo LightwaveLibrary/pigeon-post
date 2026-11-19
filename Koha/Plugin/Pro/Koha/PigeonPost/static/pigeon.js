@@ -459,6 +459,71 @@
     });
   }
 
+  // ---------- unprinted print notices ----------
+  var printOld = 0;
+  function loadPrint() {
+    if (!CAN_MANAGE || !$('pp-print')) return Promise.resolve();
+    return getJSON('print').then(function (d) {
+      printOld = d.old;
+      $('pp-print-pending').textContent = fmt(d.pending);
+      $('pp-print-old').textContent = fmt(d.old);
+      $('pp-print-old').classList.toggle('is-bad', d.old > 0);
+      $('pp-print-old-label').textContent = 'older than ' + d.days + ' days';
+      $('pp-print-oldest').textContent = d.oldest_days == null ? '—' : d.oldest_days + (d.oldest_days === 1 ? ' day' : ' days');
+      var a = $('pp-print-auto'); a.innerHTML = '';
+      a.appendChild(el('i', { class: 'pp-dot' + (d.auto ? ' ok' : '') }));
+      a.appendChild(document.createTextNode(' NIGHTLY CLEARING ' + (d.auto ? 'ON' : 'OFF')));
+      a.classList.toggle('is-off', !d.auto);
+      var bars = $('pp-print-letters'); bars.innerHTML = '';
+      var max = d.old_by_letter.reduce(function (m, r) { return Math.max(m, r.n); }, 0) || 1;
+      d.old_by_letter.forEach(function (r) {
+        bars.appendChild(el('div', { class: 'pp-bar-row' }, [
+          el('span', { class: 'pp-bar-label', text: r.letter_code, title: r.letter_code }),
+          el('div', { class: 'pp-bar-track' }, [el('div', { class: 'pp-bar-fill', style: 'width:' + (100 * r.n / max).toFixed(2) + '%' })]),
+          el('span', { class: 'pp-bar-number', text: fmt(r.n) }) ]));
+      });
+      $('pp-print-go').disabled = !d.old;
+      $('pp-print-go').textContent = d.old ? 'Clear ' + fmt(d.old) + ' older than ' + d.days + ' days' : 'Nothing older than ' + d.days + ' days';
+      var la = d.last_auto;
+      $('pp-print-last-auto').textContent = la ? 'Last nightly run ' + la.at + ': ' + (la.ok ? 'cleared ' + fmt(la.cleared) + '.' : 'failed: ' + la.error) : '';
+      var tb = $('pp-print-log').querySelector('tbody'); tb.innerHTML = '';
+      if (!d.log.length) tb.appendChild(el('tr', null, [el('td', { colspan: 5, class: 'pp-muted', text: 'The print queue has not been cleared yet.' })]));
+      d.log.forEach(function (r) {
+        tb.appendChild(el('tr', { class: r.undone_at ? 'is-undone' : '' }, [
+          el('td', { text: r.ran_at }), el('td', { text: r.days + ' days' }), el('td', { class: 'num', text: fmt(r.cleared) }),
+          el('td', { text: r.ran_by ? (r.ran_by_name || '#' + r.ran_by) : 'Automatic' }),
+          el('td', null, [r.undone_at ? el('span', { class: 'pp-muted', text: 'Undone ' + r.undone_at })
+            : r.cleared ? el('button', { type: 'button', class: 'pp-button pp-secondary pp-small', 'data-print-undo': r.id, text: 'Undo' }) : null]) ]));
+      });
+    }).catch(function (e) {
+      $('pp-print-msg').textContent = 'Could not load: ' + e.message;
+      showError('Print queue: ' + e.message);
+    });
+  }
+  if ($('pp-print')) {
+    $('pp-print-go').addEventListener('click', function () {
+      $('pp-print-confirm').querySelector('.pp-confirm-text').textContent = 'Clear ' + fmt(printOld) + ' unprinted print notice' + (printOld === 1 ? '' : 's') + '?';
+      $('pp-print-confirm').hidden = false; $('pp-print-go').hidden = true;
+    });
+    $('pp-print-no').addEventListener('click', function () { $('pp-print-confirm').hidden = true; $('pp-print-go').hidden = false; });
+    $('pp-print-yes').addEventListener('click', function () {
+      $('pp-print-yes').disabled = true; $('pp-print-msg').textContent = 'Clearing…';
+      postJSON('cud-print-clear', []).then(function (d) {
+        return loadPrint().then(function () { $('pp-print-msg').textContent = 'Cleared ' + fmt(d.cleared) + ' print notice' + (d.cleared === 1 ? '' : 's') + '.'; });
+      }).catch(function (e) { $('pp-print-msg').textContent = 'Failed: ' + e.message; })
+        .then(function () { $('pp-print-yes').disabled = false; $('pp-print-confirm').hidden = true; $('pp-print-go').hidden = false; });
+    });
+    $('pp-print-log').addEventListener('click', function (e) {
+      var id = e.target.getAttribute && e.target.getAttribute('data-print-undo');
+      if (!id) return;
+      e.target.disabled = true; e.target.textContent = 'Restoring…';
+      postJSON('cud-print-undo', [['id', id]]).then(function (d) {
+        if (!d.ok) { e.target.textContent = d.error; return; }
+        return loadPrint().then(function () { $('pp-print-msg').textContent = 'Put ' + fmt(d.restored) + ' notice' + (d.restored === 1 ? '' : 's') + ' back in the print queue.'; });
+      }).catch(function (err) { e.target.textContent = err.message; });
+    });
+  }
+
   // ---------- load ----------
   function loadAll() {
     var p = { from: state.from, to: state.to }; if (state.letter) p.letter = state.letter;
@@ -483,5 +548,6 @@
   loadAll()
     .then(function () { return loadSmtp(false); })
     .then(function () { return loadCleanup(); })
-    .then(function () { return loadPrefs(); });
+    .then(function () { return loadPrefs(); })
+    .then(function () { return loadPrint(); });
 })();

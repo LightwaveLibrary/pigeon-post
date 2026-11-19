@@ -80,6 +80,18 @@
       </section>
 
       <section class="pp-card">
+        <p class="pp-eyebrow">Print queue</p>
+        <h3>Unprinted print notices</h3>
+        <p class="pp-muted">Print notices wait in Koha's queue until someone runs gather_print_notices.pl and prints them. If nobody does, they pile up and patrons never get them.</p>
+        <label>Clear print notices older than (days)
+          <input type="number" name="print_clear_days" min="1" max="3650" value="[% s.print_clear_days | html %]" required>
+          <small>They are marked "deleted" in the queue, not removed, and each clear can be undone from the dashboard.</small></label>
+        <label class="pp-switch"><input type="checkbox" name="print_clear_auto" value="1" [% 'checked' IF s.print_clear_auto %]>
+          <span><b>Clear them automatically every night</b><br>
+          <small>Runs with Koha's nightly plugin job. Leave this off if your library prints notices less often than the age above.</small></span></label>
+      </section>
+
+      <section class="pp-card">
         <p class="pp-eyebrow">Weekly digest</p>
         <h3>Email me a summary</h3>
         <label class="pp-switch"><input type="checkbox" name="digest_enabled" value="1" [% 'checked' IF s.digest_enabled %]>

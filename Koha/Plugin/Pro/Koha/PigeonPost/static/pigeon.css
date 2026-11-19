@@ -200,3 +200,9 @@
 .pigeon .pp-tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
   padding: 1px 7px; border-radius: 999px; background: var(--pp-bar-track); color: var(--pp-muted); }
 .pigeon .pp-tag.is-expired { background: #fdf2f1; color: var(--pp-bad); }
+.pigeon .pp-print-stats { display: flex; flex-wrap: wrap; gap: 14px 40px; margin: 16px 0 18px; }
+.pigeon .pp-print-stats > div { display: flex; flex-direction: column; }
+.pigeon .pp-print-num { font-size: 30px; font-weight: 700; letter-spacing: -1.2px; color: var(--pp-navy); line-height: 1.15;
+  font-variant-numeric: tabular-nums; }
+.pigeon .pp-print-num.pp-print-old.is-bad { color: var(--pp-bad); }
+.pigeon .pp-status-label.is-off { color: var(--pp-muted); }
